@@ -60,6 +60,13 @@ More examples can be found in [Mava's Quickstart notebook](https://github.com/in
 ## 📖 Citation
 If you find this repository or GPO useful in your research, please consider citing our paper:
 ```bibtex
-@article{
+@misc{li2025multiagentguidedpolicyoptimization,
+      title={Multi-Agent Guided Policy Optimization}, 
+      author={Yueheng Li and Guangming Xie and Zongqing Lu},
+      year={2025},
+      eprint={2507.18059},
+      archivePrefix={arXiv},
+      primaryClass={cs.AI},
+      url={https://arxiv.org/abs/2507.18059}, 
 }
 ```
