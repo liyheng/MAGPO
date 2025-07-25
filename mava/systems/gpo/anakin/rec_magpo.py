@@ -523,11 +523,12 @@ def learner_setup(
         net_config=config.network.net_config,
         memory_config=config.network.memory_config,
         action_space_type=action_space_type,
+        return_dist=True
     )
     # Define network
     actor_pre_torso = hydra.utils.instantiate(config.network.actor_network.pre_torso)
     actor_post_torso = hydra.utils.instantiate(config.network.actor_network.post_torso)
-    actor_action_head = hydra.utils.instantiate(action_head, action_dim=env.action_dim)
+    actor_action_head = hydra.utils.instantiate(action_head, action_dim=env.action_dim, transofrmation=False)
     actor_network = Actor(
         pre_torso=actor_pre_torso,
         post_torso=actor_post_torso,
