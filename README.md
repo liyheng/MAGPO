@@ -1,5 +1,5 @@
 # MAGPO
-This repository provides the official implementation of **Multi-Agent Guided Policy Optimization (MAGPO)**, as introduced in our [paper](http://arxiv.org/abs/2505.15418).
+This repository provides the official implementation of **Multi-Agent Guided Policy Optimization (MAGPO)**, as introduced in our [paper](http://arxiv.org/abs/2507.18059).
 
 Our implementation is based on [Mava](https://github.com/instadeepai/Mava), and follows its concise single-file JAX implementation style. Please refer to the original Mava repository for general infrastructure details and design philosophy.
 
