@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1.4
+FROM nvidia/cuda:12.2.2-devel-ubuntu22.04
+
+ENV CUDA_HOME=/usr/local/cuda-12.2
+
+# Install system dependencies and uv
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    git \
+    build-essential \
+    pkg-config \
+    libhdf5-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+ENV UV_SYSTEM_PYTHON=1
+
+# Clone repo and install Python dependencies
+WORKDIR /app
+RUN git clone https://github.com/liyheng/MAGPO . --depth 1
+
+RUN uv sync --extra cuda12
+
+# Run the training script
+CMD ["python", "mava/systems/gpo/anakin/rec_magpo.py"]
