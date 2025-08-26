@@ -12,300 +12,166 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Tuple, Type, TypeAlias
+from functools import cached_property
+from typing import Any, Dict, Tuple, Union
 
-import gymnasium
-import gymnasium as gym
-import gymnasium.vector
-import gymnasium.wrappers
-import jaxmarl
-import jumanji
-import matrax
-from gigastep import ScenarioBuilder
-from jaxmarl.environments.smax import map_name_to_scenario
-from jumanji.environments.routing.cleaner.generator import (
-    RandomGenerator as CleanerRandomGenerator,
-)
-from jumanji.environments.routing.connector.generator import (
-    RandomWalkGenerator as ConnectorRandomGenerator,
-)
-from jumanji.environments.routing.lbf.generator import (
-    RandomGenerator as LbfRandomGenerator,
-)
-from jumanji.environments.routing.robot_warehouse.generator import (
-    RandomGenerator as RwareRandomGenerator,
-)
-from omegaconf import DictConfig
-
-from mava.types import MarlEnv
-from mava.utils.network_utils import is_gnn_based
-from mava.wrappers import (
-    AgentIDWrapper,
-    AutoResetWrapper,
-    CleanerWrapper,
-    ConnectorWrapper,
-    GigastepWrapper,
-    GymAgentIDWrapper,
-    GymRecordEpisodeMetrics,
-    GymToJumanji,
-    LbfWrapper,
-    MabraxWrapper,
-    MatraxWrapper,
-    MPEWrapper,
-    RecordEpisodeMetrics,
-    RwareWrapper,
-    SmacWrapper,
-    SmaxWrapper,
-    UoeWrapper,
-    VectorConnectorWrapper,
-    async_multiagent_worker,
-)
-from mava.wrappers.graph_wrapper import GraphWrapper
-from mava.wrappers.jaxmarl import MPEGraphWrapper
-
-registry_type: TypeAlias = dict[str, dict[str, Type]]
-
-# Registry mapping environment names to their generator and wrapper classes.
-_jumanji_registry: registry_type = {
-    "RobotWarehouse": {"generator": RwareRandomGenerator, "wrapper": RwareWrapper},
-    "LevelBasedForaging": {"generator": LbfRandomGenerator, "wrapper": LbfWrapper},
-    "Connector": {"generator": ConnectorRandomGenerator, "wrapper": ConnectorWrapper},
-    "VectorConnector": {
-        "generator": ConnectorRandomGenerator,
-        "wrapper": VectorConnectorWrapper,
-    },
-    "Cleaner": {"generator": CleanerRandomGenerator, "wrapper": CleanerWrapper},
-}
-
-# Registry mapping environment names directly to the corresponding wrapper classes.
-_matrax_registry: registry_type = {"Matrax": {"wrapper": MatraxWrapper}}
-_jaxmarl_registry: registry_type = {
-    "Smax": {"wrapper": SmaxWrapper},
-    "MaBrax": {"wrapper": MabraxWrapper},
-    "MPE": {"wrapper": MPEWrapper, "graph_wrapper": MPEGraphWrapper},
-}
-_gigastep_registry: registry_type = {"Gigastep": {"wrapper": GigastepWrapper}}
-
-_gym_registry: registry_type = {
-    "RobotWarehouse": {"wrapper": UoeWrapper},
-    "LevelBasedForaging": {"wrapper": UoeWrapper},
-    "SMACLite": {"wrapper": SmacWrapper},
-}
+import chex
+import jax.numpy as jnp
+from jumanji import specs
+from jumanji.env import Environment
+from jumanji.types import TimeStep
+from jumanji.wrappers import Wrapper
+from matrax.env import MatrixGame
+from mava.coordsum import CoordSum
+from mava.types import Observation, ObservationGlobalState, State
 
 
-def add_extra_wrappers(
-    train_env: MarlEnv, eval_env: MarlEnv, config: DictConfig, registry: registry_type
-) -> Tuple[MarlEnv, MarlEnv]:
-    """Wrappers that access and modify observations (like AgentIDWrapper) must come before
-    GraphWrapper to avoid special casing observation handling for both regular and graph
-    observations. For example, AgentIDWrapper adds agent IDs to observations, which should happen
-    before converting observation to GraphObservation."""
-    # Disable the AgentID wrapper if the environment has implicit agent IDs.
-    config.system.add_agent_id = config.system.add_agent_id & (~config.env.implicit_agent_id)
+class MatraxWrapper(Wrapper):
+    """Multi-agent wrapper for the Matrax environment."""
 
-    if config.system.add_agent_id:
-        train_env = AgentIDWrapper(train_env)
-        eval_env = AgentIDWrapper(eval_env)
+    def __init__(self, env: Environment, add_global_state: bool):
+        self.add_global_state = add_global_state
+        super().__init__(env)
+        self._env: MatrixGame
 
-    if is_gnn_based(config):
-        # Get the graph wrapper from registry or use default GraphWrapper
-        graph_wrapper = registry[config.env.env_name].get("graph_wrapper", GraphWrapper)
-        train_env = graph_wrapper(train_env)
-        eval_env = graph_wrapper(eval_env)
+        self.num_agents = self._env.num_agents
+        self.action_dim = self._env.num_actions
+        self.time_limit = self._env.time_limit
+        self.action_mask = jnp.ones((self.num_agents, self.num_actions), dtype=bool)
 
-    train_env = AutoResetWrapper(train_env)
-    train_env = RecordEpisodeMetrics(train_env)
-    eval_env = RecordEpisodeMetrics(eval_env)
+    def modify_timestep(
+        self, timestep: TimeStep
+    ) -> TimeStep[Union[Observation, ObservationGlobalState]]:
+        """Modify the timestep for `step` and `reset`."""
+        metrics: Dict[str, Any] = {"env_metrics": {}}
 
-    return train_env, eval_env
+        obs_data = {
+            "agents_view": timestep.observation.agent_obs,
+            "action_mask": self.action_mask,
+            "step_count": jnp.repeat(timestep.observation.step_count, self.num_agents),
+        }
+        if self.add_global_state:
+            global_state = jnp.concatenate(timestep.observation.agent_obs, axis=0)
+            global_state = jnp.tile(global_state, (self.num_agents, 1))
+            obs_data["global_state"] = global_state
+            return timestep.replace(observation=ObservationGlobalState(**obs_data), extras=metrics)
 
+        return timestep.replace(observation=Observation(**obs_data), extras=metrics)
 
-def make_jumanji_env(config: DictConfig, add_global_state: bool = False) -> Tuple[MarlEnv, MarlEnv]:
-    """
-    Create a Jumanji environments for training and evaluation.
+    def reset(self, key: chex.PRNGKey) -> Tuple[State, TimeStep]:
+        """Reset the environment."""
+        state, timestep = self._env.reset(key)
+        return state, self.modify_timestep(timestep)
 
-    Args:
-    ----
-        env_name (str): The name of the environment to create.
-        config (Dict): The configuration of the environment.
-        add_global_state (bool): Whether to add the global state to the observation.
+    def step(self, state: State, action: chex.Array) -> Tuple[State, TimeStep]:
+        """Step the environment."""
+        state, timestep = self._env.step(state, action)
+        return state, self.modify_timestep(timestep)
 
-    Returns:
-    -------
-        A tuple of the environments.
+    @cached_property
+    def observation_spec(self) -> specs.Spec[Union[Observation, ObservationGlobalState]]:
+        """Specification of the observation of the environment."""
+        step_count = specs.BoundedArray(
+            (self.num_agents,),
+            int,
+            jnp.zeros(self.num_agents, dtype=int),
+            jnp.repeat(self.time_limit, self.num_agents),
+            "step_count",
+        )
+        action_mask = specs.Array(
+            (self.num_agents, self.num_actions),
+            bool,
+            "action_mask",
+        )
+        obs_spec = self._env.observation_spec
+        obs_data = {
+            "agents_view": obs_spec.agent_obs,
+            "action_mask": action_mask,
+            "step_count": step_count,
+        }
+        if self.add_global_state:
+            num_obs_features = obs_spec.agent_obs.shape[-1]
+            global_state = specs.Array(
+                (self._env.num_agents, self._env.num_agents * num_obs_features),
+                obs_spec.agent_obs.dtype,
+                "global_state",
+            )
+            obs_data["global_state"] = global_state
+            return specs.Spec(ObservationGlobalState, "ObservationSpec", **obs_data)
 
-    """
-    # Config generator and select the wrapper.
-    generator = _jumanji_registry[config.env.env_name]["generator"]
-    generator = generator(**config.env.scenario.task_config)
-    wrapper = _jumanji_registry[config.env.env_name]["wrapper"]
+        return specs.Spec(Observation, "ObservationSpec", **obs_data)
 
-    # Create envs.
-    env_config = {**config.env.kwargs, **config.env.scenario.env_kwargs}
-    train_env = jumanji.make(config.env.scenario.name, generator=generator, **env_config)
-    eval_env = jumanji.make(config.env.scenario.name, generator=generator, **env_config)
-    train_env = wrapper(train_env, add_global_state=add_global_state)
-    eval_env = wrapper(eval_env, add_global_state=add_global_state)
+class CoordSumWrapper(Wrapper):
+    """Multi-agent wrapper for the Matrax environment."""
 
-    train_env, eval_env = add_extra_wrappers(train_env, eval_env, config, _jumanji_registry)
-    return train_env, eval_env
+    def __init__(self, env: Environment, add_global_state: bool):
+        self.add_global_state = add_global_state
+        super().__init__(env)
+        self._env: CoordSum
 
+        self.num_agents = self._env.num_agents
+        self.action_dim = self._env.num_actions
+        self.time_limit = self._env.time_limit
+        self.action_mask = jnp.ones((self.num_agents, self.num_actions), dtype=bool)
 
-def make_jaxmarl_env(config: DictConfig, add_global_state: bool = False) -> Tuple[MarlEnv, MarlEnv]:
-    """
-     Create a JAXMARL environment.
+    def modify_timestep(
+        self, timestep: TimeStep
+    ) -> TimeStep[Union[Observation, ObservationGlobalState]]:
+        """Modify the timestep for `step` and `reset`."""
+        metrics: Dict[str, Any] = {"env_metrics": {}}
 
-    Args:
-    ----
-        env_name (str): The name of the environment to create.
-        config (Dict): The configuration of the environment.
-        add_global_state (bool): Whether to add the global state to the observation.
+        obs_data = {
+            "agents_view": timestep.observation.agent_obs,
+            "action_mask": self.action_mask,
+            "step_count": jnp.repeat(timestep.observation.step_count, self.num_agents),
+        }
+        if self.add_global_state:
+            global_state = jnp.concatenate(timestep.observation.agent_obs, axis=0)
+            global_state = jnp.tile(global_state, (self.num_agents, 1))
+            obs_data["global_state"] = global_state
+            return timestep.replace(observation=ObservationGlobalState(**obs_data), extras=metrics)
 
-    Returns:
-    -------
-        A JAXMARL environment.
+        return timestep.replace(observation=Observation(**obs_data), extras=metrics)
 
-    """
-    kwargs = dict(config.env.kwargs)
-    if "smax" in config.env.env_name.lower():
-        kwargs["scenario"] = map_name_to_scenario(config.env.scenario.task_name)
-    elif "mpe" in config.env.env_name.lower():
-        kwargs.update(config.env.scenario.task_config)
+    def reset(self, key: chex.PRNGKey) -> Tuple[State, TimeStep]:
+        """Reset the environment."""
+        state, timestep = self._env.reset(key)
+        return state, self.modify_timestep(timestep)
 
-    # Create jaxmarl envs.
-    train_env: MarlEnv = _jaxmarl_registry[config.env.env_name]["wrapper"](
-        jaxmarl.make(config.env.scenario.name, **kwargs),
-        add_global_state,
-    )
-    eval_env: MarlEnv = _jaxmarl_registry[config.env.env_name]["wrapper"](
-        jaxmarl.make(config.env.scenario.name, **kwargs),
-        add_global_state,
-    )
+    def step(self, state: State, action: chex.Array) -> Tuple[State, TimeStep]:
+        """Step the environment."""
+        state, timestep = self._env.step(state, action)
+        return state, self.modify_timestep(timestep)
 
-    train_env, eval_env = add_extra_wrappers(train_env, eval_env, config, _jaxmarl_registry)
+    @cached_property
+    def observation_spec(self) -> specs.Spec[Union[Observation, ObservationGlobalState]]:
+        """Specification of the observation of the environment."""
+        step_count = specs.BoundedArray(
+            (self.num_agents,),
+            int,
+            jnp.zeros(self.num_agents, dtype=int),
+            jnp.repeat(self.time_limit, self.num_agents),
+            "step_count",
+        )
+        action_mask = specs.Array(
+            (self.num_agents, self.num_actions),
+            bool,
+            "action_mask",
+        )
+        obs_spec = self._env.observation_spec
+        obs_data = {
+            "agents_view": obs_spec.agent_obs,
+            "action_mask": action_mask,
+            "step_count": step_count,
+        }
+        if self.add_global_state:
+            num_obs_features = obs_spec.agent_obs.shape[-1]
+            global_state = specs.Array(
+                (self._env.num_agents, self._env.num_agents * num_obs_features),
+                obs_spec.agent_obs.dtype,
+                "global_state",
+            )
+            obs_data["global_state"] = global_state
+            return specs.Spec(ObservationGlobalState, "ObservationSpec", **obs_data)
 
-    return train_env, eval_env
-
-
-def make_matrax_env(config: DictConfig, add_global_state: bool = False) -> Tuple[MarlEnv, MarlEnv]:
-    """
-    Creates Matrax environments for training and evaluation.
-
-    Args:
-    ----
-        env_name: The name of the environment to create.
-        config: The configuration of the environment.
-        add_global_state: Whether to add the global state to the observation.
-
-    Returns:
-    -------
-        A tuple containing a train and evaluation Matrax environment.
-
-    """
-    # Select the Matrax wrapper.
-    wrapper = _matrax_registry[config.env.scenario.name]["wrapper"]
-
-    # Create envs.
-    task_name = config["env"]["scenario"]["task_name"]
-    train_env = matrax.make(task_name, **config.env.kwargs)
-    eval_env = matrax.make(task_name, **config.env.kwargs)
-    train_env = wrapper(train_env, add_global_state)
-    eval_env = wrapper(eval_env, add_global_state)
-
-    train_env, eval_env = add_extra_wrappers(train_env, eval_env, config, _matrax_registry)
-    return train_env, eval_env
-
-
-def make_gigastep_env(
-    config: DictConfig, add_global_state: bool = False
-) -> Tuple[MarlEnv, MarlEnv]:
-    """
-     Create a Gigastep environment.
-
-    Args:
-    ----
-        env_name (str): The name of the environment to create.
-        config (Dict): The configuration of the environment.
-        add_global_state (bool): Whether to add the global state to the observation. Default False.
-
-    Returns:
-    -------
-        A tuple of the environments.
-
-    """
-    wrapper = _gigastep_registry[config.env.scenario.name]["wrapper"]
-
-    kwargs = config.env.kwargs
-    scenario = ScenarioBuilder.from_config(config.env.scenario.task_config)
-
-    train_env: MarlEnv = wrapper(scenario.make(**kwargs), has_global_state=add_global_state)
-    eval_env: MarlEnv = wrapper(scenario.make(**kwargs), has_global_state=add_global_state)
-
-    train_env, eval_env = add_extra_wrappers(train_env, eval_env, config, _gigastep_registry)
-    return train_env, eval_env
-
-
-def make_gym_env(
-    config: DictConfig,
-    num_env: int,
-    add_global_state: bool = False,
-) -> GymToJumanji:
-    """
-     Create a gymnasium environment.
-
-    Args:
-        config (Dict): The configuration of the environment.
-        num_env (int) : The number of parallel envs to create.
-        add_global_state (bool): Whether to add the global state to the observation. Default False.
-
-    Returns:
-        Async environments.
-    """
-    wrapper = _gym_registry[config.env.env_name]["wrapper"]
-    config.system.add_agent_id = config.system.add_agent_id & (~config.env.implicit_agent_id)
-
-    def create_gym_env(config: DictConfig, add_global_state: bool = False) -> gymnasium.Env:
-        registered_name = f"{config.env.scenario.name}:{config.env.scenario.task_name}"
-        env = gym.make(registered_name, disable_env_checker=True, **config.env.kwargs)
-        wrapped_env = wrapper(env, config.env.use_shared_rewards, add_global_state)
-        if config.system.add_agent_id:
-            wrapped_env = GymAgentIDWrapper(wrapped_env)
-        wrapped_env = GymRecordEpisodeMetrics(wrapped_env)
-        return wrapped_env
-
-    envs = gymnasium.vector.AsyncVectorEnv(
-        [lambda: create_gym_env(config, add_global_state) for _ in range(num_env)],
-        worker=async_multiagent_worker,
-    )
-
-    envs = GymToJumanji(envs)
-
-    return envs
-
-
-def make(config: DictConfig, add_global_state: bool = False) -> Tuple[MarlEnv, MarlEnv]:
-    """
-    Create environments for training and evaluation.
-
-    Args:
-    ----
-        config (Dict): The configuration of the environment.
-        add_global_state (bool): Whether to add the global state to the observation.
-
-    Returns:
-    -------
-        A tuple of the environments.
-
-    """
-    env_name = config.env.env_name
-
-    if env_name in _jumanji_registry:
-        return make_jumanji_env(config, add_global_state)
-    elif env_name in _jaxmarl_registry:
-        return make_jaxmarl_env(config, add_global_state)
-    elif env_name in _matrax_registry:
-        return make_matrax_env(config, add_global_state)
-    elif env_name in _gigastep_registry:
-        return make_gigastep_env(config, add_global_state)
-    else:
-        raise ValueError(f"{env_name} is not a supported environment.")
+        return specs.Spec(Observation, "ObservationSpec", **obs_data)
