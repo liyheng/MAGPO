@@ -2,7 +2,6 @@
 defaults:
   - _self_
   - scenario: 3x10-30 
-# Further environment config details in "2s-8x8-2p-2f-coop" file.
 
 env_name: CoordSum # Used for logging purposes.
 
