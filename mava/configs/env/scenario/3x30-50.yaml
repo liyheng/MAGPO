@@ -1,0 +1,10 @@
+# The config of the 3x30-50 CoordSum environment
+name: CoordSum
+task_name: 3x30-50-v0
+
+task_config:
+  num_agents: 3
+  num_actions: 30
+
+env_kwargs:
+  {}  # there are no scenario specific env_kwargs for this env
