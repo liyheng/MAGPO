@@ -238,7 +238,7 @@ def get_learner_fn(
                     # Reshape output
                     actor_policy = backward_reshape(actor_policy)   
                     # Calculate kl loss
-                    kl_loss = tfd.kl_divergence(policy, lax.stop_gradient(actor_policy))
+                    kl_loss = tfd.kl_divergence(policy, lax.stop_gradient(actor_policy.distribution))
                     log_prob_actor = actor_policy.log_prob(traj_batch.action)
         
                     ratio = jnp.exp(log_prob - traj_batch.log_prob)
@@ -318,7 +318,7 @@ def get_learner_fn(
                     log_prob_actor = actor_policy.log_prob(traj_batch.action)
 
                     # Calculate kl loss
-                    kl_loss = tfd.kl_divergence(lax.stop_gradient(policy), actor_policy).mean()
+                    kl_loss = tfd.kl_divergence(lax.stop_gradient(policy), actor_policy.distribution).mean()
 
                     # Calculate actor loss
                     ratio = jnp.exp(log_prob_actor - traj_batch.log_prob)
@@ -528,7 +528,7 @@ def learner_setup(
     # Define network
     actor_pre_torso = hydra.utils.instantiate(config.network.actor_network.pre_torso)
     actor_post_torso = hydra.utils.instantiate(config.network.actor_network.post_torso)
-    actor_action_head = hydra.utils.instantiate(action_head, action_dim=env.action_dim, transofrmation=False)
+    actor_action_head = hydra.utils.instantiate(action_head, action_dim=env.action_dim)
     actor_network = Actor(
         pre_torso=actor_pre_torso,
         post_torso=actor_post_torso,
