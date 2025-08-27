@@ -1,4 +1,4 @@
-# --- Defaults Memory Sable ---
+# --- Defaults REC-MAGPO ---
 
 total_timesteps: 20000000 # Set the total environment steps.
 # If unspecified, it's derived from num_updates; otherwise, num_updates adjusts based on this value.
