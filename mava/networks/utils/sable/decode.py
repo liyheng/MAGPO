@@ -168,6 +168,7 @@ def continuous_train_decoder_fn(
     chunk_size: int,
     action_dim: int,
     rng_key: Optional[chex.PRNGKey] = None,
+    return_dist: bool = False,
 ) -> Tuple[chex.Array, chex.Array]:
     """Parallel action sampling for discrete action spaces."""
     # Delete `legal_actions` since it is not used in continuous action space
@@ -207,8 +208,10 @@ def continuous_train_decoder_fn(
     action_log_prob = distribution.log_prob(action)
     entropy = distribution.entropy(seed=rng_key)
 
-    return action_log_prob, entropy
-
+    if return_dist:
+        return action_log_prob, entropy, distribution
+    else:
+        return action_log_prob, entropy
 
 def get_shifted_continuous_actions(
     action: chex.Array, action_dim: int, n_agents: int
