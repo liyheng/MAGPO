@@ -398,6 +398,7 @@ class SableNetwork(nn.Module):
                 n_agents=self.n_agents,
                 chunk_size=self.memory_config.chunk_size,
                 action_dim=self.action_dim,
+                return_dist=self.return_dist,
             )
             self.autoregressive_act = partial(
                 continuous_autoregressive_act, action_dim=self.action_dim
