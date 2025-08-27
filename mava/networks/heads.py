@@ -27,7 +27,6 @@ class DiscreteActionHead(nn.Module):
     """Discrete Action Head"""
 
     action_dim: int
-    transofrmation: bool = True
 
     @nn.compact
     def __call__(
@@ -61,11 +60,7 @@ class DiscreteActionHead(nn.Module):
 
         #  We transform this distribution with the `Identity()` transformation to
         # keep the API identical to the ContinuousActionHead.
-        if self.transofrmation:
-            return IdentityTransformation(distribution=tfd.Categorical(logits=masked_logits))
-        else:
-            return tfd.Categorical(logits=masked_logits)
-
+        return IdentityTransformation(distribution=tfd.Categorical(logits=masked_logits))
 
 class ContinuousActionHead(nn.Module):
     """ContinuousActionHead using a transformed Normal distribution.
