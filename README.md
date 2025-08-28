@@ -8,7 +8,7 @@ Our implementation is based on [Mava](https://github.com/instadeepai/Mava), and 
 - [x] Release MAGPO code
 - [x] Add support for HAPPO
 - [x] Release the CoordSum environment used in the paper
-- [ ] Release all experimental configurations and results
+- [x] Release all experimental configurations and results
 
 
 ## 🛠️ Installation
