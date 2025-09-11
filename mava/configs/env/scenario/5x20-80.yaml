@@ -1,0 +1,10 @@
+# The config of the 5x20-80 CoordSum environment
+name: CoordSum
+task_name: 5x20-80-v0
+
+task_config:
+  num_agents: 5
+  num_actions: 20
+
+env_kwargs:
+  {}  # there are no scenario specific env_kwargs for this env

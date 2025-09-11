@@ -1,0 +1,10 @@
+# The config of the 8x15-100 CoordSum environment
+name: CoordSum
+task_name: 8x15-100-v0
+
+task_config:
+  num_agents: 8
+  num_actions: 15
+
+env_kwargs:
+  {}  # there are no scenario specific env_kwargs for this env
