@@ -143,6 +143,21 @@ def get_learner_fn(
                 policy_key,
             )
 
+            # Push forward learner's RNN
+            batched_observation = tree.map(
+                lambda x: x[jnp.newaxis, :],
+                last_obs,
+            )
+            actor_input = (
+                batched_observation,
+                last_done[jnp.newaxis, :],
+            )
+            policy_hidden_state, _ = actor_apply_fn(
+                params.actor_params,
+                last_hstates.policy_hidden_state,
+                actor_input,
+            )
+
             # Step environment
             env_state, timestep = jax.vmap(env.step, in_axes=(0, 0))(env_state, action)
 
@@ -164,7 +179,7 @@ def get_learner_fn(
                 last_timestep.observation,
                 last_hstates,
             )
-            hstates = HiddenStates(sable_hstates, last_hstates.policy_hidden_state)
+            hstates = HiddenStates(sable_hstates, policy_hidden_state)
             learner_state = LearnerState(
                 params, opt_states, key, env_state, timestep, curr_done, hstates
             )
